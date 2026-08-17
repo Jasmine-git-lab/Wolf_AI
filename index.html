@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Wolf AI</title>
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+
+</head>
+
+
+<body>
+
+    <div class="app">
+
+        <!-- ========================================= -->
+        <!-- HEADER -->
+        <!-- ========================================= -->
+
+        <header class="header">
+
+            <div class="wolf-logo">
+                🐺
+            </div>
+
+
+            <div class="header-text">
+
+                <h1>
+                    Wolf AI
+                </h1>
+
+                <p id="status">
+                    Connecting...
+                </p>
+
+            </div>
+
+
+            <div
+                id="statusDot"
+                class="status-dot connecting"
+            ></div>
+
+        </header>
+
+
+        <!-- ========================================= -->
+        <!-- WOLF VISUAL -->
+        <!-- ========================================= -->
+
+        <section class="assistant-section">
+
+            <div
+                id="wolfCircle"
+                class="wolf-circle loading"
+            >
+
+                <div class="wolf-icon">
+                    🐺
+                </div>
+
+            </div>
+
+
+            <h2 id="assistantStatus">
+                Starting Wolf...
+            </h2>
+
+
+            <p id="assistantSubtitle">
+
+                Please wait while I connect
+                to the AI.
+
+            </p>
+
+
+            <!-- VOICE STATUS -->
+
+            <div
+                id="voiceStatus"
+                class="voice-status"
+            >
+
+                🎤 Voice initializing...
+
+            </div>
+
+        </section>
+
+
+        <!-- ========================================= -->
+        <!-- CHAT -->
+        <!-- ========================================= -->
+
+        <section class="chat-container">
+
+            <div
+                id="chatBox"
+                class="chat-box"
+            >
+
+                <div class="message wolf-message">
+
+                    <div class="message-name">
+                        Wolf
+                    </div>
+
+                    <div class="message-text">
+
+                        Hello! I am Wolf AI.
+                        How can I help you?
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ========================================= -->
+        <!-- TEXT INPUT -->
+        <!-- ========================================= -->
+
+        <section class="input-section">
+
+            <input
+                type="text"
+                id="userInput"
+                placeholder="Type a message or say 'Hey Wolf'..."
+                autocomplete="off"
+            />
+
+
+            <button
+                id="sendButton"
+                type="button"
+            >
+
+                Send
+
+            </button>
+
+        </section>
+
+
+        <!-- ========================================= -->
+        <!-- VOICE INSTRUCTIONS -->
+        <!-- ========================================= -->
+
+        <section class="voice-instructions">
+
+            <div class="voice-icon">
+                🎤
+            </div>
+
+            <div>
+
+                <strong>
+                    Voice Control
+                </strong>
+
+                <p>
+                    Say <b>"Hey Wolf"</b> to activate.
+                </p>
+
+            </div>
+
+        </section>
+
+
+        <!-- ========================================= -->
+        <!-- FOOTER -->
+        <!-- ========================================= -->
+
+        <footer>
+
+            <span>
+                Wolf Desktop Assistant
+            </span>
+
+            <span>
+                ● AI Powered
+            </span>
+
+        </footer>
+
+    </div>
+
+
+    <!-- ========================================= -->
+    <!-- RENDERER JAVASCRIPT -->
+    <!-- ========================================= -->
+
+    <script src="./node_modules/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <script src="renderer.js"></script>
+
+</body>
+
+</html>
+

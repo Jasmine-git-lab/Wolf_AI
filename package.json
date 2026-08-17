@@ -1,0 +1,15 @@
+{
+  "name": "wolf-desktop",
+  "version": "1.0.0",
+  "description": "Wolf AI Desktop Voice Assistant",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "livekit-client": "^2.21.0"
+  },
+  "devDependencies": {
+    "electron": "^41.3.0"
+  }
+}

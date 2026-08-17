@@ -1,0 +1,572 @@
+* {
+    box-sizing: border-box;
+}
+
+
+body {
+
+    margin: 0;
+
+    min-height: 100vh;
+
+    background:
+        radial-gradient(
+            circle at top,
+            #202b3d 0%,
+            #111827 40%,
+            #080b10 100%
+        );
+
+    color: white;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+
+}
+
+
+.app {
+
+    width: 100%;
+
+    max-width: 900px;
+
+    min-height: 100vh;
+
+    margin: auto;
+
+    display: flex;
+
+    flex-direction: column;
+
+    padding: 25px;
+
+}
+
+
+/* ==========================================
+   HEADER
+   ========================================== */
+
+.header {
+
+    display: flex;
+
+    align-items: center;
+
+    padding: 15px 20px;
+
+    background: rgba(255, 255, 255, 0.06);
+
+    border: 1px solid rgba(255, 255, 255, 0.08);
+
+    border-radius: 18px;
+
+    backdrop-filter: blur(10px);
+
+}
+
+
+.wolf-logo {
+
+    font-size: 42px;
+
+    margin-right: 15px;
+
+}
+
+
+.header-text h1 {
+
+    margin: 0;
+
+    font-size: 24px;
+
+}
+
+
+.header-text p {
+
+    margin: 5px 0 0;
+
+    color: #aab4c3;
+
+    font-size: 14px;
+
+}
+
+
+.status-dot {
+
+    width: 12px;
+
+    height: 12px;
+
+    border-radius: 50%;
+
+    margin-left: auto;
+
+    background: #777;
+
+}
+
+
+.status-dot.connecting {
+
+    background: #f5a623;
+
+    box-shadow: 0 0 10px #f5a623;
+
+}
+
+
+.status-dot.ready {
+
+    background: #2ecc71;
+
+    box-shadow: 0 0 12px #2ecc71;
+
+}
+
+
+/* ==========================================
+   ASSISTANT
+   ========================================== */
+
+.assistant-section {
+
+    text-align: center;
+
+    padding: 35px 10px 25px;
+
+}
+
+
+.wolf-circle {
+
+    width: 120px;
+
+    height: 120px;
+
+    margin: auto;
+
+    border-radius: 50%;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    background:
+        radial-gradient(
+            circle,
+            #25364f,
+            #111827
+        );
+
+    border: 2px solid rgba(255, 255, 255, 0.12);
+
+    box-shadow:
+        0 0 35px rgba(0, 191, 255, 0.15);
+
+    transition: 0.3s ease;
+
+}
+
+
+.wolf-icon {
+
+    font-size: 60px;
+
+}
+
+
+.wolf-circle.loading {
+
+    animation: pulse 1.5s infinite;
+
+}
+
+
+.wolf-circle.ready {
+
+    box-shadow:
+        0 0 40px rgba(0, 191, 255, 0.3);
+
+}
+
+
+.wolf-circle.thinking {
+
+    animation: thinking 0.8s infinite alternate;
+
+}
+
+
+@keyframes pulse {
+
+    0% {
+        transform: scale(1);
+        opacity: 0.7;
+    }
+
+    50% {
+        transform: scale(1.06);
+        opacity: 1;
+    }
+
+    100% {
+        transform: scale(1);
+        opacity: 0.7;
+    }
+
+}
+
+
+@keyframes thinking {
+
+    from {
+        transform: scale(1);
+    }
+
+    to {
+        transform: scale(1.08);
+    }
+
+}
+
+
+.assistant-section h2 {
+
+    margin: 18px 0 5px;
+
+    font-size: 22px;
+
+}
+
+
+.assistant-section p {
+
+    margin: 0;
+
+    color: #9ca8b8;
+
+    font-size: 14px;
+
+}
+
+
+/* ==========================================
+   CHAT
+   ========================================== */
+
+.chat-container {
+
+    flex: 1;
+
+    min-height: 250px;
+
+}
+
+
+.chat-box {
+
+    width: 100%;
+
+    height: 280px;
+
+    padding: 18px;
+
+    overflow-y: auto;
+
+    background: rgba(255, 255, 255, 0.05);
+
+    border:
+        1px solid
+        rgba(255, 255, 255, 0.08);
+
+    border-radius: 18px;
+
+}
+
+
+/* Scrollbar */
+
+.chat-box::-webkit-scrollbar {
+
+    width: 6px;
+
+}
+
+
+.chat-box::-webkit-scrollbar-thumb {
+
+    background: #475569;
+
+    border-radius: 10px;
+
+}
+
+
+/* ==========================================
+   MESSAGES
+   ========================================== */
+
+.message {
+
+    max-width: 80%;
+
+    padding: 12px 15px;
+
+    margin-bottom: 12px;
+
+    border-radius: 14px;
+
+    line-height: 1.5;
+
+}
+
+
+.message-name {
+
+    font-size: 12px;
+
+    font-weight: bold;
+
+    margin-bottom: 4px;
+
+    opacity: 0.7;
+
+}
+
+
+.message-text {
+
+    font-size: 15px;
+
+    white-space: pre-wrap;
+
+    word-wrap: break-word;
+
+}
+
+
+.wolf-message {
+
+    background: rgba(0, 191, 255, 0.10);
+
+    border-left:
+        3px solid
+        #00bfff;
+
+    margin-right: auto;
+
+}
+
+
+.user-message {
+
+    background: rgba(255, 255, 255, 0.10);
+
+    margin-left: auto;
+
+    text-align: left;
+
+}
+
+
+.system-message {
+
+    text-align: center;
+
+    color: #7dd3fc;
+
+    font-size: 12px;
+
+    margin: 10px 0 15px;
+
+}
+
+
+/* ==========================================
+   INPUT
+   ========================================== */
+
+.input-section {
+
+    display: flex;
+
+    gap: 10px;
+
+    margin-top: 15px;
+
+}
+
+
+#userInput {
+
+    flex: 1;
+
+    padding: 14px 16px;
+
+    border: 1px solid rgba(255, 255, 255, 0.12);
+
+    border-radius: 12px;
+
+    outline: none;
+
+    background: rgba(255, 255, 255, 0.07);
+
+    color: white;
+
+    font-size: 15px;
+
+}
+
+
+#userInput::placeholder {
+
+    color: #7d8998;
+
+}
+
+
+#userInput:focus {
+
+    border-color: #00bfff;
+
+    box-shadow:
+        0 0 10px
+        rgba(0, 191, 255, 0.15);
+
+}
+
+
+#sendButton {
+
+    padding: 0 25px;
+
+    border: none;
+
+    border-radius: 12px;
+
+    background: #00bfff;
+
+    color: white;
+
+    font-weight: bold;
+
+    cursor: pointer;
+
+    transition: 0.2s;
+
+}
+
+
+#sendButton:hover {
+
+    transform: translateY(-1px);
+
+    filter: brightness(1.1);
+
+}
+
+
+#sendButton:disabled {
+
+    opacity: 0.5;
+
+    cursor: not-allowed;
+
+}
+
+
+/* ==========================================
+   FOOTER
+   ========================================== */
+
+footer {
+
+    display: flex;
+
+    justify-content: space-between;
+
+    margin-top: 15px;
+
+    color: #64748b;
+
+    font-size: 12px;
+
+}
+
+
+/* ==========================================
+   RESPONSIVE
+   ========================================== */
+
+@media (max-width: 600px) {
+
+    .app {
+
+        padding: 15px;
+
+    }
+
+
+    .wolf-circle {
+
+        width: 100px;
+
+        height: 100px;
+
+    }
+
+
+    .wolf-icon {
+
+        font-size: 50px;
+
+    }
+
+
+    .chat-box {
+
+        height: 250px;
+
+    }
+
+
+    #sendButton {
+
+        padding: 0 18px;
+
+    }
+
+}
+
+.voice-status {
+    margin-top: 15px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+.voice-instructions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin: 15px auto;
+    padding: 12px 20px;
+    border-radius: 12px;
+    max-width: 350px;
+}
+
+.voice-instructions p {
+    margin: 3px 0 0;
+    font-size: 13px;
+}
