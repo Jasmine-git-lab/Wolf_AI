@@ -1,21 +1,113 @@
+# ============================================================
 # Python
-.venv/
+# ============================================================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Environment / secrets
-.env
+# Testing & Pytest
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+htmlcov/
+tests/.pytest_cache/
 
+# ============================================================
 # Node / Electron
+# ============================================================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
 
-# Build files
-dist/
-build/
+# Electron Packaging & Binaries
 out/
-
-# Electron
+dist/
+release/
 *.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+
+# ============================================================
+# Environment Variables & Secrets (CRITICAL)
+# ============================================================
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# ============================================================
+# Logs, Temporary & Debug Files
+# ============================================================
+*.log
+logs/
+err.txt
+out.txt
+output.log
+electron-error.txt
+phase2_test_result.txt
+tempCodeRunnerFile.py
+scratch/
+*.zip
+renderer-phase3-backup.js
+
+# ============================================================
+# Operating System Artifacts
+# ============================================================
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ============================================================
+# IDEs & Code Editors
+# ============================================================
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~

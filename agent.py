@@ -1,67 +1,51 @@
 # ============================================================
 # WOLF AI DESKTOP ASSISTANT
 # agent.py
+#
+# Python backend:
+# - Flask API
+# - LiveKit token server
+# - Gemini text fallback
+# - Gemini Realtime voice agent
+# - Windows action tools
+# - Google / YouTube / Gmail
+# - File Explorer
+# - Applications
+# - File/folder operations
+# - Timer
+# - Motivation
+# - Weather
+# - Web search
+#
+# Voice behavior:
+# - Frontend controls microphone.
+# - Frontend handles "Hey Wolf".
+# - Wolf does NOT automatically greet.
+# - After a command finishes, frontend returns to wake mode.
 # ============================================================
 
-import sys
 import os
-import threading
+import sys
 import asyncio
-import random
-import webbrowser
+import threading
 import subprocess
-import platform
+import webbrowser
 import logging
 import urllib.parse
+import time
+import random
+import re
 
-# Make project directory importable
-sys.path.append(
-    os.path.dirname(os.path.abspath(__file__))
-)
-
-# ============================================================
-# ENVIRONMENT
-# ============================================================
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
-# ============================================================
-# LOGGING
-# ============================================================
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-logger = logging.getLogger("wolf")
-
-# ============================================================
-# FLASK
-# ============================================================
-
-from flask import (
-    Flask,
-    request,
-    jsonify,
-    send_from_directory
-)
-
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-# ============================================================
-# LIVEKIT API
-# ============================================================
+from google import genai
 
-from livekit import api
-
-# ============================================================
-# LIVEKIT AGENTS
-# ============================================================
-
-from livekit import agents
+from livekit import api, agents
 
 from livekit.agents import (
     Agent,
@@ -71,25 +55,9 @@ from livekit.agents import (
     RunContext,
 )
 
-from livekit.plugins import (
-    google,
-    noise_cancellation
-)
+from livekit.plugins import google, noise_cancellation
 
-# ============================================================
-# GEMINI TEXT API
-# ============================================================
-
-from google import genai
-
-# ============================================================
-# PROJECT FILES
-# ============================================================
-
-from promts import (
-    AGENT_INSTRUCTION,
-    SESSION_INSTRUCTION
-)
+from promts import AGENT_INSTRUCTION
 
 from tools import (
     open_website,
@@ -98,35 +66,63 @@ from tools import (
     play_music,
     play_youtube_music,
     search_web,
-    open_file_explorer
+    open_file_explorer,
 )
 
+
 # ============================================================
-# FLASK APP
+# PROJECT PATH
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+load_dotenv(BASE_DIR / ".env")
+
+from backend.orchestrator import AgentOrchestrator
+
+
+
+# ============================================================
+# LOGGING
+# ============================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[Wolf] %(asctime)s - %(levelname)s - %(message)s",
+)
+
+logger = logging.getLogger("wolf")
+
+
+# ============================================================
+# FLASK
 # ============================================================
 
 app = Flask(
     __name__,
-    static_folder=".",
-    static_url_path=""
+    static_folder=str(BASE_DIR),
+    static_url_path="",
 )
 
 CORS(app)
+
 
 # ============================================================
 # GLOBAL STATE
 # ============================================================
 
 AI_READY = False
+LIVEKIT_READY = False
 
 assistant_session = None
-
-AI_LOCK = threading.Lock()
-
 AGENT_LOOP = None
 
+
 # ============================================================
-# API KEYS
+# ENVIRONMENT
 # ============================================================
 
 GOOGLE_API_KEY = (
@@ -135,14 +131,76 @@ GOOGLE_API_KEY = (
 )
 
 LIVEKIT_URL = os.getenv("LIVEKIT_URL")
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 
-LIVEKIT_API_KEY = os.getenv(
-    "LIVEKIT_API_KEY"
+ROOM_NAME = os.getenv(
+    "LIVEKIT_ROOM",
+    "wolf-desktop-room",
 )
 
-LIVEKIT_API_SECRET = os.getenv(
-    "LIVEKIT_API_SECRET"
+USER_IDENTITY = os.getenv(
+    "LIVEKIT_IDENTITY",
+    "wolf-user",
 )
+
+
+# ============================================================
+# GEMINI CONFIG
+# ============================================================
+
+TEXT_MODEL_ENV = os.getenv(
+    "GEMINI_TEXT_MODEL",
+    "",
+).strip()
+
+LIVE_MODEL_ENV = os.getenv(
+    "GEMINI_LIVE_MODEL",
+    "",
+).strip()
+
+
+# IMPORTANT:
+# DO NOT put gemini-2.5-flash-lite here.
+#
+# Current stable text models.
+TEXT_MODEL_CANDIDATES = [
+    TEXT_MODEL_ENV,
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-pro",
+    "gemini-flash-latest",
+]
+
+
+# Current realtime models.
+#
+# LiveKit currently documents Gemini 3.1 realtime.
+LIVE_MODELS = [
+    LIVE_MODEL_ENV,
+    "gemini-3.1-flash-live-preview",
+    "gemini-2.5-flash-native-audio-latest",
+    "gemini-2.5-flash-native-audio-preview-12-2025",
+]
+
+
+TEXT_MODEL_CANDIDATES = list(
+    dict.fromkeys(
+        model
+        for model in TEXT_MODEL_CANDIDATES
+        if model
+    )
+)
+
+LIVE_MODELS = list(
+    dict.fromkeys(
+        model
+        for model in LIVE_MODELS
+        if model
+    )
+)
+
 
 # ============================================================
 # GEMINI CLIENT
@@ -161,432 +219,793 @@ if GOOGLE_API_KEY:
         AI_READY = True
 
         logger.info(
-            "Gemini text client initialized."
+            "Gemini client initialized."
         )
-
-    except Exception as e:
-
-        logger.error(
-            f"Gemini initialization failed: {e}"
-        )
-
-else:
-
-    logger.error(
-        "GOOGLE_API_KEY / GEMINI_API_KEY is missing."
-    )
-
-# ============================================================
-# LIVEKIT CONFIG CHECK
-# ============================================================
-
-if LIVEKIT_URL:
-    logger.info(
-        f"LiveKit URL configured: {LIVEKIT_URL}"
-    )
-else:
-    logger.error(
-        "LIVEKIT_URL is missing."
-    )
-
-if LIVEKIT_API_KEY and LIVEKIT_API_SECRET:
-    logger.info(
-        "LiveKit API credentials configured."
-    )
-else:
-    logger.error(
-        "LiveKit API credentials are missing."
-    )
-
-# ============================================================
-# LIVEKIT TOKEN
-# ============================================================
-
-@app.route(
-    "/livekit-token",
-    methods=["GET"]
-)
-def livekit_token():
-
-    try:
-
-        if not LIVEKIT_API_KEY:
-
-            return jsonify({
-                "error":
-                    "LIVEKIT_API_KEY is missing."
-            }), 500
-
-        if not LIVEKIT_API_SECRET:
-
-            return jsonify({
-                "error":
-                    "LIVEKIT_API_SECRET is missing."
-            }), 500
-
-        if not LIVEKIT_URL:
-
-            return jsonify({
-                "error":
-                    "LIVEKIT_URL is missing."
-            }), 500
-
-        room_name = (
-            "wolf-desktop-room"
-        )
-
-        token = (
-            api.AccessToken(
-                LIVEKIT_API_KEY,
-                LIVEKIT_API_SECRET
-            )
-            .with_identity(
-                "wolf-user"
-            )
-            .with_name(
-                "Wolf User"
-            )
-            .with_grants(
-                api.VideoGrants(
-                    room_join=True,
-                    room=room_name,
-                    can_publish=True,
-                    can_subscribe=True
-                )
-            )
-        )
-
-        jwt_token = token.to_jwt()
-
-        logger.info(
-            "LiveKit token generated."
-        )
-
-        return jsonify({
-
-            "token": jwt_token,
-
-            "url": LIVEKIT_URL,
-
-            "room": room_name
-
-        })
 
     except Exception as e:
 
         logger.exception(
-            "LiveKit token error"
+            "Gemini client initialization failed: %s",
+            e,
         )
 
-        return jsonify({
+else:
 
-            "error": str(e)
-
-        }), 500
-
-
-# ============================================================
-# FRONTEND
-# ============================================================
-
-@app.route("/")
-def home():
-
-    return send_from_directory(
-        ".",
-        "index.html"
+    logger.warning(
+        "GEMINI_API_KEY / GOOGLE_API_KEY not found."
     )
 
 
 # ============================================================
-# BASIC ACTIONS
+# UTILITY
+# ============================================================
+
+def normalize_text(value):
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def safe_url(value):
+
+    value = normalize_text(value)
+
+    if not value:
+        return ""
+
+    if not value.startswith(
+        ("http://", "https://")
+    ):
+        value = "https://" + value
+
+    return value
+
+
+def clean_model_name(model_name):
+
+    return normalize_text(
+        model_name
+    ).replace(
+        "models/",
+        "",
+    )
+
+
+# ============================================================
+# WINDOWS ACTIONS
 # ============================================================
 
 def action_open_google():
 
-    webbrowser.open(
-        "https://www.google.com",
-        new=2
-    )
+    try:
 
-    return "Google has been opened."
+        url = "https://www.google.com/"
 
+        success = webbrowser.open(
+            url,
+            new=2,
+        )
+
+        if not success:
+
+            return (
+                False,
+                "Google could not be opened, Sir.",
+            )
+
+        logger.info(
+            "Opened Google."
+        )
+
+        return (
+            True,
+            "Google has been opened, Sir.",
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Google open failed."
+        )
+
+        return (
+            False,
+            f"I could not open Google, Sir. {e}",
+        )
+
+
+# ============================================================
 
 def action_open_youtube():
 
-    webbrowser.open(
-        "https://www.youtube.com",
-        new=2
-    )
+    try:
 
-    return "YouTube has been opened."
+        url = "https://www.youtube.com/"
 
+        success = webbrowser.open(
+            url,
+            new=2,
+        )
+
+        if not success:
+
+            return (
+                False,
+                "YouTube could not be opened, Sir.",
+            )
+
+        logger.info(
+            "Opened YouTube."
+        )
+
+        return (
+            True,
+            "YouTube has been opened, Sir.",
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "YouTube open failed."
+        )
+
+        return (
+            False,
+            f"I could not open YouTube, Sir. {e}",
+        )
+
+
+# ============================================================
 
 def action_open_gmail():
 
-    webbrowser.open(
-        "https://mail.google.com",
-        new=2
-    )
+    try:
 
-    return "Gmail has been opened."
+        url = "https://mail.google.com/"
 
+        success = webbrowser.open(
+            url,
+            new=2,
+        )
 
-def action_search_google(
-    query
-):
+        if not success:
 
-    url = (
-        "https://www.google.com/search?q="
-        + urllib.parse.quote_plus(query)
-    )
+            return (
+                False,
+                "Gmail could not be opened, Sir.",
+            )
 
-    webbrowser.open(
-        url,
-        new=2
-    )
+        return (
+            True,
+            "Gmail has been opened, Sir.",
+        )
 
-    return (
-        f"I searched Google for {query}."
-    )
+    except Exception as e:
 
+        logger.exception(
+            "Gmail open failed."
+        )
 
-def action_search_youtube(
-    query
-):
-
-    url = (
-        "https://www.youtube.com/results?search_query="
-        + urllib.parse.quote_plus(query)
-    )
-
-    webbrowser.open(
-        url,
-        new=2
-    )
-
-    return (
-        f"I searched YouTube for {query}."
-    )
+        return (
+            False,
+            f"I could not open Gmail, Sir. {e}",
+        )
 
 
-def action_play_youtube(
-    query
-):
+# ============================================================
 
-    url = (
-        "https://www.youtube.com/results?search_query="
-        + urllib.parse.quote_plus(query)
-    )
+def action_search_google(query):
 
-    webbrowser.open(
-        url,
-        new=2
-    )
+    query = normalize_text(query)
 
-    logger.info(
-        f"YouTube opened for: {query}"
-    )
+    if not query:
 
-    return (
-        f"Opened YouTube and searched for {query}."
-    )
+        return (
+            False,
+            "Please tell me what you want to search for, Sir.",
+        )
+
+    try:
+
+        encoded = urllib.parse.quote_plus(
+            query
+        )
+
+        url = (
+            "https://www.google.com/search?q="
+            + encoded
+        )
+
+        success = webbrowser.open(
+            url,
+            new=2,
+        )
+
+        if not success:
+
+            return (
+                False,
+                "Google search could not be opened, Sir.",
+            )
+
+        logger.info(
+            "Google search: %s",
+            query,
+        )
+
+        return (
+            True,
+            f"I searched Google for {query}, Sir.",
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Google search failed."
+        )
+
+        return (
+            False,
+            f"Google search failed, Sir. {e}",
+        )
 
 
-def action_open_application(
-    application
-):
+# ============================================================
 
-    apps = {
+def action_search_youtube(query):
 
-        "notepad":
-            "notepad.exe",
+    query = normalize_text(query)
 
-        "calculator":
-            "calc.exe",
+    if not query:
 
-        "calc":
-            "calc.exe",
+        return (
+            False,
+            "Please tell me what to search on YouTube, Sir.",
+        )
 
-        "paint":
-            "mspaint.exe",
+    try:
 
-        "command prompt":
-            "cmd.exe",
+        encoded = urllib.parse.quote_plus(
+            query
+        )
 
-        "cmd":
-            "cmd.exe",
+        url = (
+            "https://www.youtube.com/results"
+            "?search_query="
+            + encoded
+        )
 
-        "powershell":
-            "powershell.exe",
+        success = webbrowser.open(
+            url,
+            new=2,
+        )
 
-        "explorer":
-            "explorer.exe"
+        if not success:
+
+            return (
+                False,
+                "YouTube search could not be opened, Sir.",
+            )
+
+        logger.info(
+            "YouTube search: %s",
+            query,
+        )
+
+        return (
+            True,
+            f"I searched YouTube for {query}, Sir.",
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "YouTube search failed."
+        )
+
+        return (
+            False,
+            f"YouTube search failed, Sir. {e}",
+        )
+
+
+# ============================================================
+
+def action_play_youtube(query):
+
+    query = normalize_text(query)
+
+    if not query:
+
+        return (
+            False,
+            "Please tell me what you want to play, Sir.",
+        )
+
+    try:
+
+        encoded = urllib.parse.quote_plus(
+            query
+        )
+
+        url = (
+            "https://www.youtube.com/results"
+            "?search_query="
+            + encoded
+        )
+
+        success = webbrowser.open(
+            url,
+            new=2,
+        )
+
+        if not success:
+
+            return (
+                False,
+                "YouTube could not be opened, Sir.",
+            )
+
+        return (
+            True,
+            f"I opened YouTube results for {query}, Sir.",
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "YouTube playback request failed."
+        )
+
+        return (
+            False,
+            f"I could not open YouTube, Sir. {e}",
+        )
+
+
+# ============================================================
+# APPLICATION CONTROL
+# ============================================================
+
+def action_open_application(application):
+
+    application = normalize_text(
+        application
+    ).lower()
+
+    aliases = {
+
+        "notepad": "notepad.exe",
+
+        "calculator": "calc.exe",
+        "calc": "calc.exe",
+
+        "paint": "mspaint.exe",
+
+        "cmd": "cmd.exe",
+        "command prompt": "cmd.exe",
+
+        "powershell": "powershell.exe",
+        "power shell": "powershell.exe",
+
+        "file explorer": "explorer.exe",
+        "explorer": "explorer.exe",
 
     }
 
-    app_name = (
+    executable = aliases.get(
         application
-        .lower()
-        .strip()
-    )
-
-    executable = apps.get(
-        app_name
     )
 
     if not executable:
 
         return (
-            f"I don't have a launcher "
-            f"configured for {application}."
+            False,
+            f"I don't have a Windows launcher configured "
+            f"for {application}, Sir.",
         )
 
     try:
 
         subprocess.Popen(
-            executable,
-            shell=True
+            [executable],
+            shell=False,
         )
 
         logger.info(
-            f"Opened application: {application}"
+            "Opened application: %s",
+            application,
         )
 
         return (
-            f"I opened {application}."
+            True,
+            f"{application.title()} has been opened, Sir.",
         )
 
     except Exception as e:
 
-        logger.error(
-            f"Application error: {e}"
+        logger.exception(
+            "Application launch failed."
         )
 
         return (
-            f"I couldn't open {application}."
+            False,
+            f"I could not open {application}, Sir. {e}",
         )
 
 
-def action_open_file(
-    path
-):
+# ============================================================
+# FILE OPERATIONS
+# ============================================================
+
+def action_open_file(path):
+
+    path = normalize_text(path)
+
+    if not path:
+
+        return (
+            False,
+            "Please provide a file path, Sir.",
+        )
 
     try:
 
-        path = os.path.expanduser(
-            path
+        path = os.path.expandvars(
+            os.path.expanduser(path)
         )
 
         if not os.path.exists(path):
 
             return (
-                f"I couldn't find {path}."
+                False,
+                f"I could not find {path}, Sir.",
             )
 
-        if platform.system() == "Windows":
-
-            os.startfile(path)
-
-        else:
-
-            subprocess.Popen(
-                ["xdg-open", path]
-            )
+        os.startfile(path)
 
         return (
-            f"I opened {path}."
+            True,
+            f"I opened {path}, Sir.",
         )
 
     except Exception as e:
 
-        logger.error(
-            f"File error: {e}"
+        logger.exception(
+            "File opening failed."
         )
 
         return (
-            f"I couldn't open {path}."
+            False,
+            f"I could not open that file, Sir. {e}",
         )
 
 
-def action_create_project_folder(
-    name
-):
+# ============================================================
 
-    path = os.path.join(
-        os.getcwd(),
-        name
-    )
+
+def action_create_project_folder(name):
+
+    name = normalize_text(name)
+
+    if not name:
+
+        return (
+            False,
+            "Please tell me the folder name, Sir.",
+        )
 
     try:
 
-        os.makedirs(
-            path,
-            exist_ok=True
+        safe_name = "".join(
+            c
+            for c in name
+            if c.isalnum()
+            or c in (
+                " ",
+                "_",
+                "-",
+            )
+        ).strip()
+
+        if not safe_name:
+
+            return (
+                False,
+                "That folder name is not valid, Sir.",
+            )
+
+        project_root = (
+            Path.home()
+            / "Desktop"
+            / "Wolf Projects"
+        )
+
+        project_root.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        folder = (
+            project_root
+            / safe_name
+        )
+
+        folder.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        logger.info(
+            "Created folder: %s",
+            folder,
         )
 
         return (
-            f"Project folder {name} is ready."
+            True,
+            f"The folder '{safe_name}' has been created "
+            f"on your Desktop under Wolf Projects, Sir.",
         )
 
     except Exception as e:
 
+        logger.exception(
+            "Folder creation failed."
+        )
+
         return (
-            f"I couldn't create the folder: {e}"
+            False,
+            f"I could not create the folder, Sir. {e}",
         )
 
 
-def action_set_timer(
-    minutes
-):
+# ============================================================
+
+def action_create_file(folder_name, file_name, content=""):
+    """Create a file inside a Wolf Projects folder."""
+
+    folder_name = normalize_text(folder_name)
+    file_name = normalize_text(file_name)
+
+    if not folder_name:
+        return (False, "Please tell me the folder name, Sir.")
+    if not file_name:
+        return (False, "Please tell me the file name, Sir.")
+
+    try:
+
+        safe_folder = "".join(
+            c for c in folder_name if c.isalnum() or c in (" ", "_", "-")
+        ).strip()
+
+        safe_file = "".join(
+            c for c in file_name if c.isalnum() or c in (" ", "_", "-", ".")
+        ).strip()
+
+        if not safe_folder:
+            return (False, "That folder name is not valid, Sir.")
+        if not safe_file:
+            return (False, "That file name is not valid, Sir.")
+
+        project_root = Path.home() / "Desktop" / "Wolf Projects"
+        folder = project_root / safe_folder
+        folder.mkdir(parents=True, exist_ok=True)
+
+        file_path = folder / safe_file
+        file_path.write_text(content or "", encoding="utf-8")
+
+        logger.info("Created file: %s", file_path)
+
+        return (
+            True,
+            f"I created '{safe_file}' inside '{safe_folder}', Sir.",
+        )
+
+    except Exception as e:
+
+        logger.exception("File creation failed.")
+
+        return (
+            False,
+            f"I could not create the file, Sir. {e}",
+        )
+
+
+
+# ============================================================
+# TIMER
+# ============================================================
+
+def action_set_timer(minutes):
 
     try:
 
         minutes = float(minutes)
 
-    except:
+        if minutes <= 0:
+
+            return (
+                False,
+                "The timer must be greater than zero, Sir.",
+            )
+
+        seconds = minutes * 60
+
+        def timer_finished():
+
+            logger.info(
+                "Timer finished: %s minutes",
+                minutes,
+            )
+
+            try:
+
+                import winsound
+
+                for _ in range(3):
+
+                    winsound.Beep(
+                        1000,
+                        500,
+                    )
+
+            except Exception:
+
+                print(
+                    "\n[Wolf] Timer finished!"
+                )
+
+        timer = threading.Timer(
+            seconds,
+            timer_finished,
+        )
+
+        timer.daemon = True
+        timer.start()
 
         return (
-            "Please provide a valid number of minutes."
+            True,
+            f"Timer set for {minutes:g} minutes, Sir.",
         )
 
-    def timer_done():
+    except Exception as e:
 
-        logger.info(
-            f"Timer finished: {minutes} minute(s)"
+        logger.exception(
+            "Timer creation failed."
         )
 
-        print(
-            f"\n🐺 Timer finished: "
-            f"{minutes} minute(s)",
-            flush=True
+        return (
+            False,
+            f"I could not set the timer, Sir. {e}",
         )
 
-    timer = threading.Timer(
-        minutes * 60,
-        timer_done
-    )
 
-    timer.daemon = True
-
-    timer.start()
-
-    return (
-        f"Timer set for {minutes} minutes."
-    )
-
+# ============================================================
+# MOTIVATION
+# ============================================================
 
 def action_motivate_user():
 
-    return random.choice([
+    messages = [
 
-        "You got this! Keep going!",
+        "You've got this, Sir. One focused step at a time.",
 
-        "Every small step counts!",
+        "Keep going. Progress comes from consistency, Sir.",
 
-        "Stay consistent and keep learning!"
+        "Don't wait for perfect. Build, test, improve, repeat.",
 
-    ])
+        "Your future self will thank you for the work you do today.",
+
+        "Stay focused, Sir. You're closer than you think.",
+
+    ]
+
+    return (
+        True,
+        random.choice(messages),
+    )
+
+
+# ============================================================
+# WEATHER
+# ============================================================
+
+def action_get_weather(city):
+
+    city = normalize_text(city)
+
+    if not city:
+
+        return (
+            False,
+            "Please tell me the city, Sir.",
+        )
+
+    try:
+
+        from langchain_community.tools import (
+            DuckDuckGoSearchRun
+        )
+
+        query = (
+            f"current weather in {city}"
+        )
+
+        result = DuckDuckGoSearchRun().run(
+            tool_input=query
+        )
+
+        if result:
+
+            return (
+                True,
+                f"{result}, Sir.",
+            )
+
+        return (
+            False,
+            f"I could not find the current weather "
+            f"for {city}, Sir.",
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Weather lookup failed."
+        )
+
+        return (
+            False,
+            f"I could not retrieve the weather, Sir. {e}",
+        )
+
+
+# ============================================================
+# OPEN WEBSITE
+# ============================================================
+
+def action_open_website(url):
+
+    url = safe_url(url)
+
+    if not url:
+
+        return (
+            False,
+            "Please provide a website address, Sir.",
+        )
+
+    try:
+
+        success = webbrowser.open(
+            url,
+            new=2,
+        )
+
+        if not success:
+
+            return (
+                False,
+                f"I could not open {url}, Sir.",
+            )
+
+        return (
+            True,
+            f"Opened {url}, Sir.",
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            "Website opening failed."
+        )
+
+        return (
+            False,
+            f"I could not open {url}, Sir. {e}",
+        )
 
 
 # ============================================================
@@ -595,697 +1014,1207 @@ def action_motivate_user():
 
 @function_tool()
 async def open_google(
-    context: RunContext
+    context: RunContext,
 ) -> str:
 
-    """Open Google in the default browser."""
-
-    return action_open_google()
+    return action_open_google()[1]
 
 
 @function_tool()
 async def open_youtube(
-    context: RunContext
+    context: RunContext,
 ) -> str:
 
-    """Open YouTube in the default browser."""
-
-    return action_open_youtube()
+    return action_open_youtube()[1]
 
 
 @function_tool()
 async def open_gmail(
-    context: RunContext
+    context: RunContext,
 ) -> str:
 
-    """Open Gmail in the default browser."""
-
-    return action_open_gmail()
+    return action_open_gmail()[1]
 
 
 @function_tool()
 async def search_google(
     context: RunContext,
-    query: str
+    query: str,
 ) -> str:
 
-    """Search Google for the requested query."""
-
-    return action_search_google(
-        query
-    )
+    return action_search_google(query)[1]
 
 
 @function_tool()
 async def search_youtube(
     context: RunContext,
-    query: str
+    query: str,
 ) -> str:
 
-    """Search YouTube for a requested video or topic."""
-
-    return action_search_youtube(
-        query
-    )
+    return action_search_youtube(query)[1]
 
 
 @function_tool()
 async def play_youtube(
     context: RunContext,
-    query: str
+    query: str,
 ) -> str:
 
-    """
-    Open YouTube and search for the requested song,
-    artist or video.
-    """
-
-    return action_play_youtube(
-        query
-    )
+    return action_play_youtube(query)[1]
 
 
 @function_tool()
 async def open_application(
     context: RunContext,
-    application: str
+    application: str,
 ) -> str:
 
-    """Open a Windows desktop application."""
-
-    return action_open_application(
-        application
-    )
+    return action_open_application(application)[1]
 
 
 @function_tool()
 async def open_file(
     context: RunContext,
-    path: str
+    path: str,
 ) -> str:
 
-    """Open a file or folder."""
-
-    return action_open_file(
-        path
-    )
+    return action_open_file(path)[1]
 
 
 @function_tool()
 async def create_project_folder(
     context: RunContext,
-    name: str
+    name: str,
 ) -> str:
 
-    """Create a folder in the current project directory."""
-
-    return action_create_project_folder(
-        name
-    )
+    return action_create_project_folder(name)[1]
 
 
 @function_tool()
 async def set_timer(
     context: RunContext,
-    minutes: int
+    minutes: float,
 ) -> str:
 
-    """Set a timer in minutes."""
-
-    return action_set_timer(
-        minutes
-    )
+    return action_set_timer(minutes)[1]
 
 
 @function_tool()
 async def motivate_user(
-    context: RunContext
+    context: RunContext,
 ) -> str:
 
-    """Give the user a short motivational message."""
+    return action_motivate_user()[1]
 
-    return action_motivate_user()
+
+@function_tool()
+async def get_weather_action(
+    context: RunContext,
+    city: str,
+) -> str:
+
+    return action_get_weather(city)[1]
+
+
+@function_tool()
+async def open_website_action(
+    context: RunContext,
+    url: str,
+) -> str:
+
+    return action_open_website(url)[1]
+
+
+@function_tool()
+async def create_file_action(
+    context: RunContext,
+    folder_name: str,
+    file_name: str,
+    content: str = "",
+) -> str:
+    """Create a new file inside a Wolf Projects folder on the Desktop."""
+
+    return action_create_file(folder_name, file_name, content)[1]
 
 
 # ============================================================
-# EXISTING TOOLS
+# AGENT TOOL LIST
 # ============================================================
 
 AGENT_TOOLS = [
 
-    open_google,
-
-    open_youtube,
-
-    open_gmail,
-
-    search_google,
-
-    search_youtube,
-
-    play_youtube,
-
+    # Existing tools.py tools
     open_website,
-
+    get_weather,
+    open_default_browser,
+    play_music,
+    play_youtube_music,
     search_web,
-
-    open_application,
-
-    open_file,
-
     open_file_explorer,
 
-    play_music,
-
-    play_youtube_music,
-
-    get_weather,
-
+    # Local Windows tools
+    open_google,
+    open_youtube,
+    open_gmail,
+    search_google,
+    search_youtube,
+    play_youtube,
+    open_application,
+    open_file,
     create_project_folder,
-
+    create_file_action,
     set_timer,
-
-    motivate_user
-
+    motivate_user,
+    get_weather_action,
+    open_website_action,
 ]
 
 
+
 # ============================================================
-# TEXT COMMAND ROUTER
-#
-# This fixes the problem where:
-# "Play this song on YouTube"
-#
-# was answered by Gemini but the tool was never executed.
+# TEXT MODEL DISCOVERY
 # ============================================================
 
-def execute_text_action(
-    text
-):
+def find_text_model():
 
-    original = text.strip()
+    if not gemini_client:
+        return None
 
-    lower = original.lower()
-
-    # --------------------------------------------------------
-    # PLAY YOUTUBE
-    # --------------------------------------------------------
-
-    play_words = [
-        "play ",
-        "play this song",
-        "play song",
-        "play music"
-    ]
-
-    youtube_words = [
-        "youtube",
-        "on youtube"
-    ]
-
-    if (
-        any(
-            word in lower
-            for word in play_words
+    try:
+        logger.info(
+            "Checking available Gemini text models..."
         )
-        and
-        any(
-            word in lower
-            for word in youtube_words
-        )
-    ):
 
-        query = lower
+        models = gemini_client.models.list()
+        available = []
 
-        for phrase in [
-            "play this song on youtube",
-            "play this song on youtube",
-            "play on youtube",
-            "play on youtube",
-            "youtube"
-        ]:
-
-            query = query.replace(
-                phrase,
-                ""
+        for model in models:
+            name = getattr(
+                model,
+                "name",
+                "",
             )
+            if name:
+                available.append(
+                    clean_model_name(name)
+                )
 
-        query = query.strip()
-
-        if not query:
-
-            query = original
-
-        return action_play_youtube(
-            query
+        logger.info(
+            "Available Gemini models (%d found): %s",
+            len(available),
+            available[:20],
         )
 
-    # --------------------------------------------------------
-    # OPEN GOOGLE
-    # --------------------------------------------------------
+        candidates = []
+        if TEXT_MODEL_ENV:
+            candidates.append(clean_model_name(TEXT_MODEL_ENV))
+        for c in TEXT_MODEL_CANDIDATES:
+            cand_clean = clean_model_name(c)
+            if cand_clean and cand_clean not in candidates:
+                candidates.append(cand_clean)
 
-    if lower in [
-        "open google",
-        "launch google",
-        "start google"
-    ]:
+        for candidate_short in candidates:
+            if candidate_short in available:
+                try:
+                    gemini_client.models.generate_content(
+                        model=candidate_short,
+                        contents="ping",
+                    )
+                    logger.info(
+                        "Selected verified responsive model: %s",
+                        candidate_short,
+                    )
+                    return candidate_short
+                except Exception as ping_err:
+                    logger.warning(
+                        "Candidate model %s failed ping (%s), trying next...",
+                        candidate_short,
+                        ping_err,
+                    )
+                    continue
 
-        return action_open_google()
+        for model_name in available:
+            lower = model_name.lower()
+            if (
+                "gemini" in lower
+                and "flash" in lower
+                and "embedding" not in lower
+                and "live" not in lower
+                and "native-audio" not in lower
+            ):
+                return model_name
 
-    # --------------------------------------------------------
-    # OPEN YOUTUBE
-    # --------------------------------------------------------
+        return "gemini-3.5-flash-lite"
 
-    if lower in [
-        "open youtube",
-        "launch youtube",
-        "start youtube"
-    ]:
-
-        return action_open_youtube()
-
-    # --------------------------------------------------------
-    # OPEN GMAIL
-    # --------------------------------------------------------
-
-    if lower in [
-        "open gmail",
-        "launch gmail"
-    ]:
-
-        return action_open_gmail()
-
-    # --------------------------------------------------------
-    # NOTEPAD
-    # --------------------------------------------------------
-
-    if (
-        "open notepad" in lower
-    ):
-
-        return action_open_application(
-            "notepad"
+    except Exception as e:
+        logger.warning(
+            "Could not discover text models: %s",
+            e,
         )
 
-    # --------------------------------------------------------
-    # CALCULATOR
-    # --------------------------------------------------------
+    if TEXT_MODEL_ENV:
+        return clean_model_name(TEXT_MODEL_ENV)
 
-    if (
-        "open calculator" in lower
-        or "open calc" in lower
-    ):
+    return "gemini-3.5-flash-lite"
 
-        return action_open_application(
-            "calculator"
-        )
 
-    # --------------------------------------------------------
-    # PAINT
-    # --------------------------------------------------------
 
-    if (
-        "open paint" in lower
-    ):
+TEXT_MODEL = find_text_model()
 
-        return action_open_application(
-            "paint"
-        )
+logger.info(
+    "Selected text model: %s",
+    TEXT_MODEL,
+)
 
-    # --------------------------------------------------------
-    # GOOGLE SEARCH
-    # --------------------------------------------------------
+orchestrator = AgentOrchestrator(
+    gemini_client=gemini_client,
+    model_name=TEXT_MODEL or "gemini-3.8-flash",
+)
 
-    if lower.startswith(
-        "search google for "
-    ):
-
-        query = original[
-            len("search google for "):
-        ].strip()
-
-        return action_search_google(
-            query
-        )
-
-    # --------------------------------------------------------
-    # YOUTUBE SEARCH
-    # --------------------------------------------------------
-
-    if lower.startswith(
-        "search youtube for "
-    ):
-
-        query = original[
-            len("search youtube for "):
-        ].strip()
-
-        return action_search_youtube(
-            query
-        )
-
-    # --------------------------------------------------------
-    # NOTHING MATCHED
-    # --------------------------------------------------------
-
-    return None
 
 
 # ============================================================
 # GEMINI TEXT
 # ============================================================
 
-def ask_gemini_text(
-    user_text
-):
+def ask_gemini_text(prompt: str) -> str:
 
-    if gemini_client is None:
+    if not gemini_client:
 
         return (
-            "Gemini is not configured. "
+            "Gemini is not configured, Sir. "
             "Please check your API key."
         )
 
-    try:
+    models = []
 
-        logger.info(
-            f"TEXT USER: {user_text}"
+    if TEXT_MODEL:
+
+        models.append(
+            clean_model_name(TEXT_MODEL)
         )
 
-        response = (
-            gemini_client.models.generate_content(
+    for model in TEXT_MODEL_CANDIDATES:
 
-                model="gemini-3.6-flash",
+        models.append(
+            clean_model_name(model)
+        )
 
-                contents=(
+    # Remove duplicates.
+    models = list(
+        dict.fromkeys(models)
+    )
 
-                    AGENT_INSTRUCTION
+    last_error = None
 
-                    + "\n\n"
+    for model_name in models:
 
-                    + """
-You are Wolf, a desktop AI assistant.
+        for attempt in range(2):
 
-Answer normal questions clearly and naturally.
+            try:
 
-Do not claim that you performed a computer action
-unless the action has actually been performed.
-
-Computer actions are handled separately by Wolf's
-local action system.
-"""
-
-                    + "\nUser:\n"
-
-                    + user_text
-
+                logger.info(
+                    "Gemini text request: "
+                    "model=%s attempt=%s",
+                    model_name,
+                    attempt + 1,
                 )
 
-            )
-        )
+                response = (
+                    gemini_client
+                    .models
+                    .generate_content(
+                        model=model_name,
+                        contents=prompt,
+                    )
+                )
 
-        reply = (
-            response.text
-            if response.text
-            else
-            "I couldn't generate a response."
-        )
+                text = getattr(
+                    response,
+                    "text",
+                    None,
+                )
 
-        logger.info(
-            f"TEXT WOLF: {reply}"
-        )
+                if text:
 
-        return reply
+                    logger.info(
+                        "Gemini text response received "
+                        "from %s",
+                        model_name,
+                    )
 
-    except Exception as e:
+                    return text.strip()
 
-        logger.exception(
-            "Gemini text error"
-        )
+                logger.warning(
+                    "Gemini returned an empty response "
+                    "from %s",
+                    model_name,
+                )
 
-        return (
-            f"I encountered an error: {e}"
-        )
+                break
+
+            except Exception as exc:
+
+                last_error = exc
+
+                error_text = str(exc)
+
+                logger.warning(
+                    "Gemini text error "
+                    "(model=%s attempt=%s): %s",
+                    model_name,
+                    attempt + 1,
+                    error_text,
+                )
+
+                upper_error = error_text.upper()
+
+                # ------------------------------------------------
+                # MODEL DOES NOT EXIST / NOT AVAILABLE
+                # ------------------------------------------------
+
+                if (
+                    "404" in error_text
+                    or "NOT_FOUND" in upper_error
+                    or "NO LONGER AVAILABLE" in upper_error
+                ):
+
+                    logger.warning(
+                        "Skipping unavailable model: %s",
+                        model_name,
+                    )
+
+                    break
+
+                # ------------------------------------------------
+                # TEMPORARY RATE / SERVER ERROR
+                # ------------------------------------------------
+
+                if (
+                    "429" in error_text
+                    or "503" in error_text
+                    or "UNAVAILABLE" in upper_error
+                    or "RESOURCE_EXHAUSTED" in upper_error
+                    or "TOO MANY REQUESTS" in upper_error
+                ):
+
+                    wait_time = (
+                        3 * (2 ** attempt)
+                    )
+
+                    logger.info(
+                        "Temporary Gemini error. "
+                        "Waiting %s seconds...",
+                        wait_time,
+                    )
+
+                    time.sleep(
+                        wait_time
+                    )
+
+                    continue
+
+                # ------------------------------------------------
+                # AUTH ERROR
+                # ------------------------------------------------
+
+                if (
+                    "401" in error_text
+                    or "403" in error_text
+                    or "PERMISSION_DENIED" in upper_error
+                    or "UNAUTHENTICATED" in upper_error
+                ):
+
+                    logger.error(
+                        "Gemini API authentication/"
+                        "permission error."
+                    )
+
+                    return (
+                        "Gemini authentication failed, Sir. "
+                        "Please check your API key."
+                    )
+
+                # ------------------------------------------------
+                # OTHER ERROR
+                # ------------------------------------------------
+
+                break
+
+    logger.error(
+        "All Gemini text models failed. "
+        "Last error: %s",
+        last_error,
+    )
+
+    return (
+        "Sorry, Sir. Gemini is temporarily unavailable. "
+        "Please try again in a moment."
+    )
 
 
 # ============================================================
-# HEALTH
+# TEXT ACTION ROUTER
+# ============================================================
+
+def execute_text_action(text):
+
+    original = normalize_text(text)
+    lower = original.lower()
+
+    # Strip common voice filler prefixes
+    def strip_filler(s):
+        for filler in (
+            "please ", "can you ", "could you ", "would you ",
+            "wolf ", "hey wolf ", "i want to ", "i'd like to ",
+            "i want you to ", "i need you to ",
+        ):
+            if s.startswith(filler):
+                s = s[len(filler):]
+        return s
+
+    clean = strip_filler(lower)
+
+    # ========================================================
+    # GOOGLE homepage
+    # ========================================================
+
+    google_home = {"open google", "open google.com", "launch google", "go to google", "visit google"}
+    if lower in google_home or clean in google_home:
+        return action_open_google()[1]
+
+    # ========================================================
+    # YOUTUBE homepage
+    # ========================================================
+
+    yt_home = {"open youtube", "launch youtube", "open youtube.com", "go to youtube", "visit youtube"}
+    if lower in yt_home or clean in yt_home:
+        return action_open_youtube()[1]
+
+    # ========================================================
+    # GMAIL
+    # ========================================================
+
+    gmail_home = {"open gmail", "open email", "open google mail", "launch gmail", "go to gmail"}
+    if lower in gmail_home or clean in gmail_home:
+        return action_open_gmail()[1]
+
+    # ========================================================
+    # FILE EXPLORER
+    # ========================================================
+
+    explorer_triggers = {
+        "open file explorer", "open explorer", "open files",
+        "open file manager", "file explorer", "show files",
+        "open my files", "show my files",
+    }
+    if lower in explorer_triggers or clean in explorer_triggers or "file explorer" in lower:
+        try:
+            subprocess.Popen(["explorer.exe", "/n,", "C:\\"])
+            return "File Explorer has been opened, Sir."
+        except Exception as e:
+            return f"I could not open File Explorer, Sir. {e}"
+
+    # ========================================================
+    # APPLICATIONS
+    # ========================================================
+
+    app_names = [
+        "notepad", "calculator", "calc", "paint",
+        "command prompt", "cmd", "powershell",
+    ]
+
+    for app_name in app_names:
+        for candidate in (lower, clean):
+            if candidate in (
+                f"open {app_name}",
+                f"launch {app_name}",
+                f"start {app_name}",
+                f"run {app_name}",
+            ):
+                return action_open_application(app_name)[1]
+
+    # ========================================================
+    # GOOGLE SEARCH  — expanded patterns
+    # ========================================================
+
+    google_prefixes = [
+        "search google for ",
+        "search for ",
+        "search google ",
+        "google search for ",
+        "google search ",
+        "google ",
+        "search on google for ",
+        "search on google ",
+        "do a google search for ",
+        "look up on google ",
+        "look up ",
+    ]
+
+    for prefix in google_prefixes:
+        for src_lower, src_orig in ((lower, original), (clean, original[len(lower) - len(clean):] if len(lower) > len(clean) else original)):
+            if src_lower.startswith(prefix):
+                query = src_orig[len(prefix):].strip()
+                if query:
+                    return action_search_google(query)[1]
+
+    # ========================================================
+    # YOUTUBE SEARCH
+    # ========================================================
+
+    youtube_prefixes = [
+        "search youtube for ",
+        "search youtube ",
+        "youtube search for ",
+        "youtube search ",
+        "search on youtube for ",
+        "search on youtube ",
+    ]
+
+    for prefix in youtube_prefixes:
+        for src_lower, src_orig in ((lower, original), (clean, original[len(lower) - len(clean):] if len(lower) > len(clean) else original)):
+            if src_lower.startswith(prefix):
+                query = src_orig[len(prefix):].strip()
+                if query:
+                    return action_search_youtube(query)[1]
+
+    # ========================================================
+    # PLAY YOUTUBE
+    # ========================================================
+
+    if "youtube" in lower and (lower.startswith("play") or clean.startswith("play")):
+        query = lower if lower.startswith("play") else clean
+        for phrase in ("play on youtube", "play youtube", "play"):
+            query = query.replace(phrase, "", 1)
+        query = query.strip()
+        if query:
+            return action_play_youtube(query)[1]
+
+    # ========================================================
+    # MULTI-STEP: Create folder AND file inside it
+    # ========================================================
+
+    multi_match = re.search(
+        r"(?:create|make)\s+(?:a\s+)?folder\s+"
+        r"(?:called\s+|named\s+)?[\"']?([A-Za-z0-9 _\-]+?)[\"']?"
+        r"\s+and\s+(?:create\s+)?(?:a\s+)?file\s+"
+        r"(?:called\s+|named\s+)?[\"']?([A-Za-z0-9 _\-\.]+?)[\"']?"
+        r"(?:\s+inside\s+it|\s+in\s+it|\s+inside\s+the\s+folder)?$",
+        lower,
+    )
+
+    if multi_match:
+        folder_name = multi_match.group(1).strip()
+        file_name = multi_match.group(2).strip()
+        if folder_name and file_name:
+            folder_result = action_create_project_folder(folder_name)
+            if folder_result[0]:
+                file_result = action_create_file(folder_name, file_name)
+                return f"{folder_result[1]} {file_result[1]}"
+            return folder_result[1]
+
+    # ========================================================
+    # CREATE FOLDER (single)
+    # ========================================================
+
+    folder_prefixes = [
+        "create folder ",
+        "make folder ",
+        "create a folder ",
+        "make a folder ",
+        "create a folder called ",
+        "make a folder called ",
+        "create folder called ",
+        "make folder called ",
+        "create a new folder called ",
+        "create a new folder named ",
+        "create a folder named ",
+    ]
+
+    for prefix in folder_prefixes:
+        for src_lower, src_orig in ((lower, original), (clean, original[len(lower) - len(clean):] if len(lower) > len(clean) else original)):
+            if src_lower.startswith(prefix):
+                name = src_orig[len(prefix):].strip()
+                name = re.sub(
+                    r"\s+(?:on\s+(?:the\s+)?desktop|in\s+wolf\s+projects|on\s+my\s+desktop)$",
+                    "",
+                    name,
+                    flags=re.IGNORECASE,
+                ).strip()
+                if name:
+                    return action_create_project_folder(name)[1]
+
+    # ========================================================
+    # CREATE FILE (standalone)
+    # ========================================================
+
+    file_prefixes = [
+        "create file ",
+        "make file ",
+        "create a file ",
+        "make a file ",
+        "create a file called ",
+        "make a file called ",
+        "create file called ",
+    ]
+
+    for prefix in file_prefixes:
+        for src_lower, src_orig in ((lower, original), (clean, original[len(lower) - len(clean):] if len(lower) > len(clean) else original)):
+            if src_lower.startswith(prefix):
+                remainder = src_orig[len(prefix):].strip()
+                m = re.match(r"^(.+?)\s+(?:inside|in)\s+(?:folder\s+)?(.+)$", remainder, re.IGNORECASE)
+                if m:
+                    file_name = m.group(1).strip()
+                    folder_name = m.group(2).strip()
+                else:
+                    file_name = remainder
+                    folder_name = "General"
+                if file_name:
+                    return action_create_file(folder_name, file_name)[1]
+
+    # ========================================================
+    # TIMER
+    # ========================================================
+
+    if "timer" in lower:
+        match = re.search(
+            r"(\d+(?:\.\d+)?)\s*(minute|minutes|min|mins|hour|hours|second|seconds|sec|secs)",
+            lower,
+        )
+        if match:
+            quantity = float(match.group(1))
+            unit = match.group(2)
+            if "hour" in unit:
+                minutes = quantity * 60
+            elif "sec" in unit:
+                minutes = quantity / 60
+            else:
+                minutes = quantity
+            return action_set_timer(minutes)[1]
+
+    # ========================================================
+    # MOTIVATION
+    # ========================================================
+
+    if "motivate me" in lower or "motivation" in lower or "give me motivation" in lower or "inspire me" in lower:
+        return action_motivate_user()[1]
+
+    # ========================================================
+    # WEBSITE
+    # ========================================================
+
+    for pfx in ("open website ", "open site ", "open url ", "go to ", "visit "):
+        for src_lower, src_orig in ((lower, original), (clean, original[len(lower) - len(clean):] if len(lower) > len(clean) else original)):
+            if src_lower.startswith(pfx):
+                url = src_orig[len(pfx):].strip()
+                if url and ("." in url or url.startswith("http")):
+                    return action_open_website(url)[1]
+
+    # ========================================================
+    # WEATHER
+    # ========================================================
+
+    weather_prefixes = [
+        "weather in ",
+        "what is the weather in ",
+        "what's the weather in ",
+        "check weather in ",
+        "what is the weather like in ",
+        "what's the weather like in ",
+        "weather for ",
+        "weather at ",
+        "weather today in ",
+    ]
+
+    for prefix in weather_prefixes:
+        for src_lower, src_orig in ((lower, original), (clean, original[len(lower) - len(clean):] if len(lower) > len(clean) else original)):
+            if src_lower.startswith(prefix):
+                city = src_orig[len(prefix):].strip()
+                if city:
+                    return action_get_weather(city)[1]
+
+    return None
+
+
+# ============================================================
+# FLASK ROUTES
 # ============================================================
 
 @app.route(
     "/health",
-    methods=["GET"]
+    methods=["GET"],
 )
 def health():
 
-    livekit_ready = bool(
-        LIVEKIT_URL
-        and LIVEKIT_API_KEY
-        and LIVEKIT_API_SECRET
-    )
-
     return jsonify({
 
-        "status": "ok",
+        "ok": True,
 
         "ai_ready": AI_READY,
 
-        "livekit": livekit_ready,
+        "livekit": bool(
+            LIVEKIT_URL
+            and LIVEKIT_API_KEY
+            and LIVEKIT_API_SECRET
+        ),
 
         "agentic": True,
 
-        "voice": livekit_ready,
+        "voice": True,
 
-        "microphone": livekit_ready
+        "microphone": "frontend-controlled",
+
+        "text_model": TEXT_MODEL,
+
+        "live_models": LIVE_MODELS,
 
     })
 
 
 # ============================================================
-# TEXT CHAT
-# ============================================================
 
 @app.route(
-    "/ask",
-    methods=["POST"]
+    "/livekit-token",
+    methods=["GET"],
 )
-def ask():
+def livekit_token():
 
-    if not AI_READY:
+    if not (
+        LIVEKIT_API_KEY
+        and LIVEKIT_API_SECRET
+        and LIVEKIT_URL
+    ):
 
         return jsonify({
-
-            "reply":
-                "Wolf AI is not ready yet.",
-
-            "ready":
-                False
-
-        }), 503
+            "error": (
+                "LiveKit environment variables "
+                "are not configured."
+            )
+        }), 500
 
     try:
 
-        data = request.get_json(
-            silent=True
+        token = api.AccessToken(
+            LIVEKIT_API_KEY,
+            LIVEKIT_API_SECRET,
         )
 
-        if not data:
-
-            return jsonify({
-
-                "reply":
-                    "No message received.",
-
-                "ready":
-                    True
-
-            }), 400
-
-        user_message = (
-            data.get(
-                "message",
-                ""
-            )
-            .strip()
+        token.with_identity(
+            USER_IDENTITY
         )
 
-        if not user_message:
+        token.with_name(
+            "Wolf User"
+        )
 
-            return jsonify({
-
-                "reply":
-                    "Please tell me what you need.",
-
-                "ready":
-                    True
-
-            })
-
-        # ----------------------------------------------------
-        # FIRST: TRY REAL LOCAL ACTION
-        # ----------------------------------------------------
-
-        with AI_LOCK:
-
-            action_result = (
-                execute_text_action(
-                    user_message
-                )
+        token.with_grants(
+            api.VideoGrants(
+                room_join=True,
+                room=ROOM_NAME,
+                can_publish=True,
+                can_subscribe=True,
+                can_publish_data=True,
             )
+        )
 
-        if action_result:
-
-            logger.info(
-                f"ACTION EXECUTED: {action_result}"
-            )
-
-            return jsonify({
-
-                "reply":
-                    action_result,
-
-                "ready":
-                    True,
-
-                "action":
-                    True
-
-            })
-
-        # ----------------------------------------------------
-        # OTHERWISE NORMAL GEMINI QUESTION
-        # ----------------------------------------------------
-
-        with AI_LOCK:
-
-            result = ask_gemini_text(
-                user_message
-            )
+        jwt_token = token.to_jwt()
 
         return jsonify({
 
-            "reply":
-                result,
+            "token": jwt_token,
 
-            "ready":
-                True,
+            "url": LIVEKIT_URL,
 
-            "action":
-                False
+            "room": ROOM_NAME,
+
+            "identity": USER_IDENTITY,
 
         })
 
     except Exception as e:
 
         logger.exception(
-            "/ask error"
+            "LiveKit token creation failed."
         )
 
         return jsonify({
-
-            "reply":
-                f"Error: {e}",
-
-            "ready":
-                True
-
+            "error": str(e)
         }), 500
 
 
 # ============================================================
-# LIVEKIT VOICE AGENT
+
+@app.route(
+    "/",
+    methods=["GET"],
+)
+def home():
+
+    return send_from_directory(
+        BASE_DIR,
+        "index.html",
+    )
+
+
+# ============================================================
+# AUDIO TRANSCRIPTION ENDPOINT
 # ============================================================
 
-class Assistant(Agent):
+@app.route(
+    "/transcribe-audio",
+    methods=["POST"],
+)
+def transcribe_audio():
+    """
+    Transcribes audio recorded via standard HTML5 MediaRecorder (WebM/WAV)
+    using Gemini multimodal audio transcription with GOOGLE_API_KEY.
+    Returns: {"ok": True, "text": "transcribed text"} or {"ok": True, "text": "", "empty": True}
+    """
+    if not gemini_client:
+        return jsonify({
+            "ok": False,
+            "error": "Gemini client is not configured.",
+        }), 500
+
+    audio_file = request.files.get("audio")
+    if not audio_file:
+        return jsonify({
+            "ok": False,
+            "error": "No audio file provided in request.",
+        }), 400
+
+    audio_bytes = audio_file.read()
+    if not audio_bytes or len(audio_bytes) < 100:
+        return jsonify({
+            "ok": True,
+            "text": "",
+            "empty": True,
+        })
+
+    mime_type = audio_file.content_type or "audio/webm"
+    if "webm" in mime_type:
+        mime_type = "audio/webm"
+    elif "wav" in mime_type:
+        mime_type = "audio/wav"
+
+    from google.genai import types
+
+    candidates = [TEXT_MODEL, "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-2.5-pro"]
+    candidates = [c for c in candidates if c]
+
+    for model_name in candidates:
+        try:
+            logger.info("Transcribing audio (%d bytes) with model: %s", len(audio_bytes), model_name)
+            resp = gemini_client.models.generate_content(
+                model=model_name,
+                contents=[
+                    types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+                    "Transcribe the spoken audio verbatim into English text. Output only the exact words spoken. Do not add conversational filler, notes, quotes, or markdown. If the audio is silent or contains no discernible speech, output: EMPTY",
+                ],
+            )
+            raw = (getattr(resp, "text", "") or "").strip()
+            if not raw or raw.upper() == "EMPTY":
+                return jsonify({
+                    "ok": True,
+                    "text": "",
+                    "empty": True,
+                })
+
+            clean_text = raw.strip('"\'').strip()
+            logger.info("Transcription result: %s", clean_text)
+            return jsonify({
+                "ok": True,
+                "text": clean_text,
+            })
+
+        except Exception as exc:
+            logger.warning("Transcription attempt with %s failed: %s", model_name, exc)
+            continue
+
+    return jsonify({
+        "ok": False,
+        "error": "All transcription model candidates failed.",
+    }), 503
+
+
+# ============================================================
+
+@app.route(
+    "/ask",
+    methods=["POST"],
+)
+def ask():
+
+    data = request.get_json(
+        silent=True
+    ) or {}
+
+    text = normalize_text(
+        data.get("message")
+    )
+
+    if not text:
+
+        return jsonify({
+            "ok": False,
+            "error": "Message is empty.",
+        }), 400
+
+    logger.info(
+        "Text request: %s",
+        text,
+    )
+
+    # --------------------------------------------------------
+    # AGENTIC ORCHESTRATION (FAST PATH -> AGENTIC PATH -> AI)
+    # --------------------------------------------------------
+
+    try:
+
+        result = orchestrator.process_command(text)
+
+        return jsonify(result)
+
+    except Exception as e:
+
+        logger.exception(
+            "Orchestrator request error: %s",
+            e,
+        )
+
+        return jsonify({
+
+            "ok": False,
+
+            "success": False,
+
+            "type": "error",
+
+            "error": str(e),
+
+            "message": f"Sorry Sir, I encountered an error: {e}",
+
+        }), 500
+
+
+
+# ============================================================
+# LIVE REALTIME MODEL
+# ============================================================
+
+def create_realtime_model(
+    model_name
+):
+
+    if not GOOGLE_API_KEY:
+
+        raise RuntimeError(
+            "Gemini API key is missing."
+        )
+
+    instructions = f"""
+{AGENT_INSTRUCTION}
+
+VOICE MODE:
+
+- The frontend controls the "Hey Wolf" wake word.
+- Do not greet automatically.
+- When the frontend activates the microphone, the user's speech
+  should be treated as a command.
+- Execute the appropriate tool before saying an action is complete.
+- Never pretend an action succeeded.
+- Keep simple responses short.
+- Use search_web for web/research/latest information.
+- Use search_google when Google search is explicitly requested.
+- Use search_youtube for YouTube searches.
+- Use play_youtube when the user asks to play something on YouTube.
+"""
+
+    logger.info(
+        "Creating Gemini realtime model: %s",
+        model_name,
+    )
+
+    return google.realtime.RealtimeModel(
+
+        model=model_name,
+
+        voice="Charon",
+
+        api_key=GOOGLE_API_KEY,
+
+        instructions=instructions,
+
+    )
+
+
+# ============================================================
+# VOICE SESSION
+# ============================================================
+
+async def start_voice_session(
+    ctx,
+    assistant,
+):
+
+    global assistant_session
+
+    last_error = None
+
+    for model_name in LIVE_MODELS:
+
+        for attempt in range(2):
+
+            try:
+
+                logger.info(
+                    "Trying Gemini realtime model "
+                    "%s (attempt %s/2)",
+                    model_name,
+                    attempt + 1,
+                )
+
+                realtime_model = (
+                    create_realtime_model(
+                        model_name
+                    )
+                )
+
+                session = AgentSession(
+
+                    llm=realtime_model,
+
+                    max_tool_steps=5,
+
+                )
+
+                @session.on(
+                    "user_input_transcribed"
+                )
+                def on_user_transcription(
+                    event
+                ):
+
+                    try:
+
+                        logger.info(
+                            "USER TRANSCRIPT: %s | final=%s",
+                            event.transcript,
+                            event.is_final,
+                        )
+
+                    except Exception:
+                        pass
+
+                @session.on(
+                    "conversation_item_added"
+                )
+                def on_conversation_item(
+                    event
+                ):
+
+                    try:
+
+                        logger.debug(
+                            "Conversation item added: %s",
+                            event.item,
+                        )
+
+                    except Exception:
+                        pass
+
+                await session.start(
+
+                    assistant,
+
+                    room=ctx.room,
+
+                    room_input_options=RoomInputOptions(
+
+                        video_enabled=False,
+
+                        audio_enabled=True,
+
+                        text_enabled=True,
+
+                        noise_cancellation=(
+                            noise_cancellation.BVC()
+                        ),
+
+                    ),
+
+                )
+
+                assistant_session = session
+
+                logger.info(
+                    "Wolf realtime session started "
+                    "with model: %s",
+                    model_name,
+                )
+
+                # IMPORTANT:
+                # No generate_reply().
+                #
+                # Frontend controls the wake word.
+
+                return session
+
+            except Exception as e:
+
+                last_error = e
+
+                logger.warning(
+                    "Realtime model %s failed: %s",
+                    model_name,
+                    e,
+                )
+
+                await asyncio.sleep(
+                    2 * (attempt + 1)
+                )
+
+    raise RuntimeError(
+        "All realtime models failed. "
+        f"Last error: {last_error}"
+    )
+
+
+# ============================================================
+# WOLF AGENT
+# ============================================================
+
+class WolfAssistant(Agent):
 
     def __init__(self):
 
         super().__init__(
 
             instructions=(
-
                 AGENT_INSTRUCTION
-
                 + """
 
-You are Wolf, a Windows desktop voice assistant.
+VOICE BEHAVIOR:
 
-You are an ACTION-ORIENTED AGENT.
+The frontend controls wake-word detection.
 
-When the user asks you to perform an action,
-USE THE AVAILABLE TOOL.
+Do not automatically start a conversation.
 
-Do NOT simply say that you performed the action.
+After "Hey Wolf":
 
-IMPORTANT TOOL RULES:
+1. Understand the user's command.
+2. Select the correct tool.
+3. Execute the tool.
+4. Verify the result.
+5. Give a short natural response.
 
-1. If the user asks to open Google:
-   call open_google.
-
-2. If the user asks to open YouTube:
-   call open_youtube.
-
-3. If the user asks to open Gmail:
-   call open_gmail.
-
-4. If the user asks to search Google:
-   call search_google.
-
-5. If the user asks to search YouTube:
-   call search_youtube.
-
-6. If the user asks to PLAY a song, artist, music,
-   or video on YouTube:
-   call play_youtube.
-
-7. If the user asks to open Notepad:
-   call open_application with "notepad".
-
-8. If the user asks to open Calculator:
-   call open_application with "calculator".
-
-9. If the user asks to open Paint:
-   call open_application with "paint".
-
-10. If the user asks to create a folder:
-    call create_project_folder.
-
-11. If the user asks for a timer:
-    call set_timer.
-
-12. If the user asks for weather:
-    call get_weather.
-
-13. If the user asks to open a website:
-    call open_website.
-
-14. If the user asks to open File Explorer:
-    call open_file_explorer.
-
-After a tool completes successfully,
-briefly tell the user what actually happened.
-
-Never say "I am playing it" before the tool
-has actually returned successfully.
-
-For normal questions such as:
-"What is AI?"
-"What is machine learning?"
-"What is CNN?"
-answer normally.
-
-Keep voice responses concise and natural.
-
-The user may begin commands with:
-"Hey Wolf".
-
-Treat "Hey Wolf" as the wake phrase and ignore
-that phrase when interpreting the actual command.
+Never claim that an action succeeded unless the
+corresponding tool actually succeeded.
 """
-
             ),
 
-            tools=AGENT_TOOLS
+            tools=AGENT_TOOLS,
 
         )
 
@@ -1294,203 +2223,55 @@ that phrase when interpreting the actual command.
 # LIVEKIT ENTRYPOINT
 # ============================================================
 
-async def entrypoint(
-    ctx: agents.JobContext
-):
+async def entrypoint(ctx):
 
-    global assistant_session
     global AGENT_LOOP
+    global LIVEKIT_READY
 
-    AGENT_LOOP = (
-        asyncio.get_running_loop()
-    )
-
-    logger.info(
-        "===================================="
-    )
+    AGENT_LOOP = asyncio.get_running_loop()
 
     logger.info(
-        "🐺 WOLF VOICE AGENT STARTING"
+        "Wolf agent entrypoint started."
     )
+
+    await ctx.connect()
+
+    LIVEKIT_READY = True
 
     logger.info(
-        "===================================="
+        "Connected to LiveKit room: %s",
+        ctx.room.name,
     )
 
-    # --------------------------------------------------------
-    # CONNECT
-    # --------------------------------------------------------
+    assistant = WolfAssistant()
 
     try:
 
-        logger.info(
-            "Connecting to LiveKit room..."
+        await start_voice_session(
+            ctx,
+            assistant,
         )
-
-        await ctx.connect()
-
-        logger.info(
-            f"Connected to room: {ctx.room.name}"
-        )
-
-    except Exception as e:
-
-        logger.exception(
-            f"LiveKit connection failed: {e}"
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # CREATE ASSISTANT
-    # --------------------------------------------------------
-
-    assistant = Assistant()
-
-    # --------------------------------------------------------
-    # CREATE REALTIME GEMINI SESSION
-    # --------------------------------------------------------
-
-    try:
-
-        session = AgentSession(
-
-            llm=google.realtime.RealtimeModel(
-
-                model=(
-                    "gemini-2.5-flash-native-audio-preview-12-2025"
-                ),
-
-                voice="Charon",
-
-                api_key=GOOGLE_API_KEY,
-
-                instructions=(
-                    SESSION_INSTRUCTION
-                    + """
-
-You are Wolf.
-
-Speak naturally and concisely.
-
-Use tools whenever the user requests a
-computer action.
-
-Actually execute the tool before confirming
-the action.
-
-If asked to play something on YouTube,
-use the play_youtube tool.
-"""
-                )
-
-            ),
-
-            max_tool_steps=5
-
-        )
-
-        assistant_session = session
-
-    except Exception as e:
-
-        logger.exception(
-            f"Failed to create AgentSession: {e}"
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # START SESSION
-    # --------------------------------------------------------
-
-    try:
-
-        logger.info(
-            "Starting Wolf voice session..."
-        )
-
-        await session.start(
-
-            room=ctx.room,
-
-            agent=assistant,
-
-            room_input_options=RoomInputOptions(
-
-                video_enabled=False,
-
-                noise_cancellation=(
-                    noise_cancellation.BVC()
-                )
-
-            )
-
-        )
-
-        logger.info(
-            "🐺 WOLF VOICE AGENT READY"
-        )
-
-        logger.info(
-            "Microphone audio is received through LiveKit."
-        )
-
-        logger.info(
-            "Agentic tools are enabled."
-        )
-
-    except Exception as e:
-
-        logger.exception(
-            f"AgentSession start failed: {e}"
-        )
-
-        assistant_session = None
-
-        return
-
-    # --------------------------------------------------------
-    # GREETING
-    # --------------------------------------------------------
-
-    try:
-
-        await session.generate_reply(
-
-            instructions=(
-                "Say exactly one short friendly "
-                "sentence telling the user that "
-                "Wolf is ready."
-            )
-
-        )
-
-    except Exception as e:
-
-        logger.error(
-            f"Greeting error: {e}"
-        )
-
-    # --------------------------------------------------------
-    # KEEP ALIVE
-    # --------------------------------------------------------
-
-    try:
 
         while True:
 
             await asyncio.sleep(
-                1
+                3600
             )
 
     except asyncio.CancelledError:
 
-        assistant_session = None
-
         logger.info(
-            "Wolf voice session ended."
+            "Wolf voice session cancelled."
         )
+
+    except Exception as e:
+
+        logger.exception(
+            "Voice session crashed: %s",
+            e,
+        )
+
+        raise
 
 
 # ============================================================
@@ -1500,8 +2281,7 @@ use the play_youtube tool.
 def start_flask():
 
     logger.info(
-        "Starting Flask on "
-        "http://127.0.0.1:5000"
+        "Starting Flask backend on 127.0.0.1:5000"
     )
 
     app.run(
@@ -1512,7 +2292,7 @@ def start_flask():
 
         debug=False,
 
-        use_reloader=False
+        use_reloader=False,
 
     )
 
@@ -1521,52 +2301,47 @@ def start_flask():
 # MAIN
 # ============================================================
 
-if __name__ == "__main__":
-
-    logger.info(
-        "===================================="
-    )
-
-    logger.info(
-        "Starting Wolf Desktop Assistant"
-    )
-
-    logger.info(
-        "===================================="
-    )
-
-    # --------------------------------------------------------
-    # START FLASK
-    # --------------------------------------------------------
+def main():
 
     flask_thread = threading.Thread(
 
         target=start_flask,
 
-        daemon=True
+        daemon=True,
 
     )
 
     flask_thread.start()
 
-    # --------------------------------------------------------
-    # START LIVEKIT AGENT WORKER
-    # --------------------------------------------------------
+    time.sleep(
+        0.5
+    )
 
-    if len(sys.argv) == 1:
+    logger.info(
+        "Wolf backend is running."
+    )
 
-        sys.argv.append(
-            "start"
-        )
+    logger.info(
+        "Starting LiveKit worker..."
+    )
 
-    agents.cli.run_app(
+    worker_options = agents.WorkerOptions(
 
-        agents.WorkerOptions(
-
-            entrypoint_fnc=entrypoint,
-
-            port=0
-
-        )
+        entrypoint_fnc=entrypoint,
 
     )
+
+    if len(sys.argv) == 1:
+        sys.argv.append("start")
+
+    agents.cli.run_app(
+        worker_options
+    )
+
+
+
+# ============================================================
+
+if __name__ == "__main__":
+
+    main()

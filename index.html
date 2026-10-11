@@ -1,215 +1,136 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-
     <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>Wolf AI</title>
-
-    <link
-        rel="stylesheet"
-        href="style.css"
-    >
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WOLF AI Overlay HUD</title>
+    <link rel="stylesheet" href="style.css">
 </head>
-
-
 <body>
 
-    <div class="app">
+    <!-- =====================================================
+         FLOATING COMPACT HUD CAPSULE
+    ====================================================== -->
+    <div id="hudCapsule" class="hud-capsule entering state-idle">
 
-        <!-- ========================================= -->
-        <!-- HEADER -->
-        <!-- ========================================= -->
+        <!-- =================================================
+             TOP BAR (Drag region & minimal controls)
+        ================================================== -->
+        <header class="topbar drag-region">
 
-        <header class="header">
-
-            <div class="wolf-logo">
-                🐺
+            <div class="brand no-drag">
+                <div class="brand-badge">
+                    <span class="brand-pulse"></span>
+                    <span class="brand-name">WOLF</span>
+                    <span class="brand-tag">AI</span>
+                </div>
             </div>
 
-
-            <div class="header-text">
-
-                <h1>
-                    Wolf AI
-                </h1>
-
-                <p id="status">
+            <div class="topbar-actions no-drag">
+                <div id="connectionStatus" class="connection" title="Backend connection status">
                     Connecting...
-                </p>
+                </div>
 
+                <button id="pinBtn" class="window-control-btn active" title="Toggle Always-On-Top" aria-label="Pin Window">
+                    📌
+                </button>
+                <button id="minBtn" class="window-control-btn" title="Minimize" aria-label="Minimize Window">
+                    ─
+                </button>
+                <button id="closeBtn" class="window-control-btn close-btn" title="Hide to Tray" aria-label="Close Window">
+                    ✕
+                </button>
             </div>
-
-
-            <div
-                id="statusDot"
-                class="status-dot connecting"
-            ></div>
 
         </header>
 
+        <!-- =================================================
+             ASSISTANT CORE: CENTER MICROPHONE & INTERACTION
+        ================================================== -->
+        <main class="hud-body no-drag">
 
-        <!-- ========================================= -->
-        <!-- WOLF VISUAL -->
-        <!-- ========================================= -->
+            <!-- Hero: Animated Microphone Assistant Orb -->
+            <div class="mic-orb-wrapper">
+                <div class="mic-ripple-ring ring-1"></div>
+                <div class="mic-ripple-ring ring-2"></div>
+                <div class="mic-ripple-ring ring-3"></div>
 
-        <section class="assistant-section">
+                <div id="wolfCircle" class="wolf-circle mic-orb-button" role="button" tabindex="0" title="Click to start/stop listening">
+                    <!-- SVG Microphone Vector -->
+                    <svg class="mic-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="22"></line>
+                        <line x1="8" y1="22" x2="16" y2="22"></line>
+                    </svg>
 
-            <div
-                id="wolfCircle"
-                class="wolf-circle loading"
-            >
-
-                <div class="wolf-icon">
-                    🐺
-                </div>
-
-            </div>
-
-
-            <h2 id="assistantStatus">
-                Starting Wolf...
-            </h2>
-
-
-            <p id="assistantSubtitle">
-
-                Please wait while I connect
-                to the AI.
-
-            </p>
-
-
-            <!-- VOICE STATUS -->
-
-            <div
-                id="voiceStatus"
-                class="voice-status"
-            >
-
-                🎤 Voice initializing...
-
-            </div>
-
-        </section>
-
-
-        <!-- ========================================= -->
-        <!-- CHAT -->
-        <!-- ========================================= -->
-
-        <section class="chat-container">
-
-            <div
-                id="chatBox"
-                class="chat-box"
-            >
-
-                <div class="message wolf-message">
-
-                    <div class="message-name">
-                        Wolf
+                    <!-- Mini audio equalizer waveform bars (active during speaking/listening) -->
+                    <div class="wave-bars">
+                        <span class="wave-bar bar-1"></span>
+                        <span class="wave-bar bar-2"></span>
+                        <span class="wave-bar bar-3"></span>
+                        <span class="wave-bar bar-4"></span>
                     </div>
-
-                    <div class="message-text">
-
-                        Hello! I am Wolf AI.
-                        How can I help you?
-
-                    </div>
-
                 </div>
-
             </div>
 
-        </section>
-
-
-        <!-- ========================================= -->
-        <!-- TEXT INPUT -->
-        <!-- ========================================= -->
-
-        <section class="input-section">
-
-            <input
-                type="text"
-                id="userInput"
-                placeholder="Type a message or say 'Hey Wolf'..."
-                autocomplete="off"
-            />
-
-
-            <button
-                id="sendButton"
-                type="button"
-            >
-
-                Send
-
-            </button>
-
-        </section>
-
-
-        <!-- ========================================= -->
-        <!-- VOICE INSTRUCTIONS -->
-        <!-- ========================================= -->
-
-        <section class="voice-instructions">
-
-            <div class="voice-icon">
-                🎤
+            <!-- Assistant Status Typography -->
+            <div class="status-block">
+                <h1 id="statusText" class="status-title">Wolf is ready</h1>
+                <p id="statusSubtitle" class="status-subtitle">Say "Hey Wolf" or tap microphone</p>
             </div>
 
-            <div>
-
-                <strong>
-                    Voice Control
-                </strong>
-
-                <p>
-                    Say <b>"Hey Wolf"</b> to activate.
-                </p>
-
+            <!-- Current Interaction Display: Single Active Interaction Only -->
+            <div id="currentInteraction" class="current-interaction-wrapper">
+                <div id="chatBox" class="chat-box">
+                    <div class="message wolf-message current-response">
+                        <div class="message-label">WOLF</div>
+                        <div class="message-text">Wolf AI initialized. How may I assist you, Sir?</div>
+                    </div>
+                </div>
             </div>
 
-        </section>
+            <!-- Sleek Compact Command Input Strip -->
+            <div class="input-strip">
+                <input
+                    id="textInput"
+                    type="text"
+                    placeholder="Ask or type command..."
+                    autocomplete="off"
+                    spellcheck="false"
+                >
+                <button id="sendButton" class="send-button" title="Send Command" aria-label="Send">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
 
+            <!-- Preserved for full backward compatibility with legacy JS handlers & unit tests -->
+            <div class="legacy-elements" style="display: none;" aria-hidden="true">
+                <div id="voiceStatus" class="voice-status">Microphone off</div>
+                <div id="micIndicator" class="mic-indicator">
+                    <span class="mic-dot"></span>
+                    <span>Microphone</span>
+                </div>
+                <button id="startListening" class="primary-button">🎙 Start Listening</button>
+                <button id="stopListening" class="danger-button">■ Stop Listening</button>
+            </div>
 
-        <!-- ========================================= -->
-        <!-- FOOTER -->
-        <!-- ========================================= -->
+        </main>
 
-        <footer>
-
-            <span>
-                Wolf Desktop Assistant
+        <!-- =================================================
+             MINIMAL FOOTER
+        ================================================== -->
+        <footer class="hud-footer drag-region">
+            <span class="hud-hint no-drag">
+                <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> • Ambient Assistant
             </span>
-
-            <span>
-                ● AI Powered
-            </span>
-
         </footer>
 
     </div>
 
-
-    <!-- ========================================= -->
-    <!-- RENDERER JAVASCRIPT -->
-    <!-- ========================================= -->
-
-    <script src="./node_modules/livekit-client/dist/livekit-client.umd.min.js"></script>
     <script src="renderer.js"></script>
-
 </body>
-
 </html>
-

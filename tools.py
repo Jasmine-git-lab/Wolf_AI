@@ -6,96 +6,381 @@ import subprocess
 import webbrowser
 import time
 import wikipedia
+from urllib.parse import quote_plus
 
 from langchain_community.tools import DuckDuckGoSearchRun
 from livekit.agents import function_tool, RunContext
 
-logging.basicConfig(level=logging.INFO)
 
+# ---------------------------------------------------------
+# LOGGING
+# ---------------------------------------------------------
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("wolf-tools")
+
+
+# ---------------------------------------------------------
+# OPEN FILE EXPLORER
+# ---------------------------------------------------------
 
 @function_tool()
 async def open_file_explorer(context: RunContext) -> str:
+    """
+    Open Windows File Explorer.
+    """
+
     try:
         subprocess.Popen(["explorer", "/n,", "C:\\"])
-        logging.info("Opened new File Explorer window.")
+
+        logger.info("Opened File Explorer.")
+
         return "Opened a new File Explorer window, Sir."
+
     except Exception as e:
-        logging.error(f"Error opening File Explorer: {e}")
+        logger.error(f"Error opening File Explorer: {e}")
+
         return f"Failed to open File Explorer, Sir. {e}"
 
 
+# ---------------------------------------------------------
+# OPEN DEFAULT BROWSER
+# ---------------------------------------------------------
+
 @function_tool()
 async def open_default_browser(context: RunContext) -> str:
+    """
+    Open Google in the default browser.
+    """
+
     try:
-        url = f"https://www.google.com/?nocache={time.time()}"
+        url = "https://www.google.com/"
+
         webbrowser.open(url, new=2)
-        logging.info(f"Opened default web browser to: {url}")
-        return "Opened your default browser to Google, Sir."
+
+        logger.info(f"Opened browser: {url}")
+
+        return "Opened Google in your default browser, Sir."
+
     except Exception as e:
-        logging.error(f"Error opening default browser: {e}")
+        logger.error(f"Error opening default browser: {e}")
+
         return "An error occurred while opening your default browser, Sir."
 
 
+# ---------------------------------------------------------
+# SEARCH GOOGLE
+# ---------------------------------------------------------
+
 @function_tool()
-async def get_weather(context: RunContext, city: str) -> str:
+async def search_google(context: RunContext, query: str) -> str:
+    """
+    Search Google for the user's query.
+
+    Example:
+    search_google("latest research papers on voice assistants")
+    """
+
     try:
-        query = f"current temperature in {city}"
-        result = DuckDuckGoSearchRun().run(tool_input=query)
-        logging.info(f"Weather search result for {city}: {result}")
-        return f"{result}, Sir."
+
+        # Remove unnecessary spaces
+        query = query.strip()
+
+        if not query:
+            logger.warning("Google search called with empty query.")
+
+            return "I need something to search for, Sir."
+
+        # Convert query into URL-safe format
+        encoded_query = quote_plus(query)
+
+        # Create actual Google search URL
+        google_url = (
+            f"https://www.google.com/search?q={encoded_query}"
+        )
+
+        logger.info(
+            f"Google search query: {query}"
+        )
+
+        logger.info(
+            f"Google search URL: {google_url}"
+        )
+
+        # Open actual search results
+        webbrowser.open(
+            google_url,
+            new=2
+        )
+
+        return (
+            f"I searched Google for '{query}', Sir."
+        )
+
     except Exception as e:
-        logging.error(f"Error retrieving weather for {city}: {e}")
-        return "An error occurred while retrieving the weather, Sir."
+
+        logger.error(
+            f"Error searching Google for '{query}': {e}"
+        )
+
+        return (
+            "An error occurred while searching Google, Sir."
+        )
 
 
-@function_tool()
-async def open_website(context: RunContext, url: str) -> str:
-    try:
-        webbrowser.open(url, new=2)
-        logging.info(f"Opened website: {url}")
-        return f"Opened {url}, Sir."
-    except Exception as e:
-        logging.error(f"Error opening website {url}: {e}")
-        return f"An error occurred while opening {url}, Sir."
-
-
-@function_tool()
-async def play_music(context: RunContext, file_path: str) -> str:
-    try:
-        os.startfile(file_path)
-        logging.info(f"Playing music: {file_path}")
-        return f"Playing your music file, Sir."
-    except Exception as e:
-        logging.error(f"Error playing music: {e}")
-        return "An error occurred while playing your music, Sir."
-
+# ---------------------------------------------------------
+# WEATHER
+# ---------------------------------------------------------
 
 @function_tool()
-async def play_youtube_music(context: RunContext, query: str) -> str:
+async def get_weather(
+    context: RunContext,
+    city: str
+) -> str:
+
     try:
-        search_query = query.replace(" ", "+")
-        youtube_url = f"https://www.youtube.com/results?search_query={search_query}&nocache={time.time()}"
-        webbrowser.open(youtube_url, new=2)
-        logging.info(f"Searching YouTube for: {query}")
-        return f"Opened YouTube for '{query}', Sir."
-    except Exception as e:
-        logging.error(f"Error opening YouTube for '{query}': {e}")
-        return "An error occurred while opening YouTube, Sir."
 
+        city = city.strip()
 
-@function_tool()
-async def search_web(context: RunContext, query: str) -> str:
-    try:
-        result = DuckDuckGoSearchRun().run(tool_input=query)
-        logging.info(f"DuckDuckGo result for '{query}': {result}")
+        query = f"current weather in {city}"
 
-        if result and len(result.strip()) > 0:
+        result = DuckDuckGoSearchRun().run(
+            tool_input=query
+        )
+
+        logger.info(
+            f"Weather search result for {city}: {result}"
+        )
+
+        if result:
             return f"{result}, Sir."
 
-        summary = wikipedia.summary(query, sentences=2)
-        logging.info(f"Wikipedia fallback for '{query}': {summary}")
-        return f"{summary}, Sir."
+        return (
+            f"I could not find the current weather "
+            f"for {city}, Sir."
+        )
 
     except Exception as e:
-        logging.error(f"Error during search for '{query}': {e}")
-        return f"An error occurred while retrieving that information, Sir."
+
+        logger.error(
+            f"Error retrieving weather for {city}: {e}"
+        )
+
+        return (
+            "An error occurred while retrieving "
+            "the weather, Sir."
+        )
+
+
+# ---------------------------------------------------------
+# OPEN WEBSITE
+# ---------------------------------------------------------
+
+@function_tool()
+async def open_website(
+    context: RunContext,
+    url: str
+) -> str:
+
+    try:
+
+        url = url.strip()
+
+        # If user/tool gives only domain name
+        if not url.startswith(
+            ("http://", "https://")
+        ):
+            url = "https://" + url
+
+        webbrowser.open(
+            url,
+            new=2
+        )
+
+        logger.info(
+            f"Opened website: {url}"
+        )
+
+        return f"Opened {url}, Sir."
+
+    except Exception as e:
+
+        logger.error(
+            f"Error opening website {url}: {e}"
+        )
+
+        return (
+            f"An error occurred while opening "
+            f"{url}, Sir."
+        )
+
+
+# ---------------------------------------------------------
+# PLAY LOCAL MUSIC
+# ---------------------------------------------------------
+
+@function_tool()
+async def play_music(
+    context: RunContext,
+    file_path: str
+) -> str:
+
+    try:
+
+        file_path = file_path.strip()
+
+        if not os.path.exists(file_path):
+            return (
+                f"I could not find the music file "
+                f"at {file_path}, Sir."
+            )
+
+        os.startfile(file_path)
+
+        logger.info(
+            f"Playing music: {file_path}"
+        )
+
+        return "Playing your music file, Sir."
+
+    except Exception as e:
+
+        logger.error(
+            f"Error playing music: {e}"
+        )
+
+        return (
+            "An error occurred while playing "
+            "your music, Sir."
+        )
+
+
+# ---------------------------------------------------------
+# SEARCH / PLAY YOUTUBE MUSIC
+# ---------------------------------------------------------
+
+@function_tool()
+async def play_youtube_music(
+    context: RunContext,
+    query: str
+) -> str:
+
+    try:
+
+        query = query.strip()
+
+        if not query:
+            return (
+                "Please tell me what you want "
+                "to play on YouTube, Sir."
+            )
+
+        encoded_query = quote_plus(query)
+
+        youtube_url = (
+            "https://www.youtube.com/results"
+            f"?search_query={encoded_query}"
+        )
+
+        webbrowser.open(
+            youtube_url,
+            new=2
+        )
+
+        logger.info(
+            f"YouTube search: {query}"
+        )
+
+        return (
+            f"Opened YouTube search for "
+            f"'{query}', Sir."
+        )
+
+    except Exception as e:
+
+        logger.error(
+            f"Error opening YouTube for "
+            f"'{query}': {e}"
+        )
+
+        return (
+            "An error occurred while opening "
+            "YouTube, Sir."
+        )
+
+
+# ---------------------------------------------------------
+# WEB SEARCH - DUCKDUCKGO
+# ---------------------------------------------------------
+
+@function_tool()
+async def search_web(
+    context: RunContext,
+    query: str
+) -> str:
+
+    try:
+
+        query = query.strip()
+
+        if not query:
+            return (
+                "Please tell me what you want "
+                "me to search for, Sir."
+            )
+
+        logger.info(
+            f"Web search query: {query}"
+        )
+
+        result = DuckDuckGoSearchRun().run(
+            tool_input=query
+        )
+
+        if result and result.strip():
+
+            logger.info(
+                f"DuckDuckGo result received "
+                f"for: {query}"
+            )
+
+            return f"{result}, Sir."
+
+        # -------------------------------------------------
+        # WIKIPEDIA FALLBACK
+        # -------------------------------------------------
+
+        try:
+
+            summary = wikipedia.summary(
+                query,
+                sentences=2
+            )
+
+            logger.info(
+                f"Wikipedia fallback used "
+                f"for: {query}"
+            )
+
+            return f"{summary}, Sir."
+
+        except Exception:
+
+            return (
+                f"I could not find useful information "
+                f"for '{query}', Sir."
+            )
+
+    except Exception as e:
+
+        logger.error(
+            f"Error during web search "
+            f"for '{query}': {e}"
+        )
+
+        return (
+            "An error occurred while retrieving "
+            "that information, Sir."
+        )
+
+        
